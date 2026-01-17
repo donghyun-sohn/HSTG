@@ -47,5 +47,5 @@ You can also download a ZIP and unzip it as `mini_dev-main` in this folder.
 Then you can run:
 
 ```
-python /Users/donghyunsohn/Downloads/HSTG/main.py --mode rule --limit 5
+python main.py --mode rule --limit 5
 ```
