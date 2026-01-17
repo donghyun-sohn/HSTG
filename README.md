@@ -1,4 +1,4 @@
-# HSTG Entity Extraction Demo
+# Hierarchical Semantic-Topological Graph (HSTG) 
 
 Quick demo for hierarchical schema linking: extract entities/keywords from a
 natural-language query, with optional local LLM (Ollama).
