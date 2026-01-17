@@ -24,21 +24,6 @@ STOPWORDS = {
     "most", "least", "more", "less", "many", "much",
 }
 
-VERB_TO_CONCEPT = {
-    "buy": "transaction",
-    "bought": "transaction",
-    "purchase": "transaction",
-    "purchased": "transaction",
-    "order": "transaction",
-    "ordered": "transaction",
-    "sell": "transaction",
-    "sold": "transaction",
-    "pay": "payment",
-    "paid": "payment",
-    "ship": "shipping",
-    "shipped": "shipping",
-}
-
 PHRASE_HINTS = [
     (re.compile(r"\bmost expensive\b", re.I), ["price", "cost"]),
     (re.compile(r"\bhighest price\b", re.I), ["price", "cost"]),
@@ -72,10 +57,7 @@ def extract_entities_rule_based(query: str) -> List[str]:
         if token in STOPWORDS:
             continue
         token = _simple_singularize(token)
-        if token in VERB_TO_CONCEPT:
-            results.append(VERB_TO_CONCEPT[token])
-        else:
-            results.append(token)
+        results.append(token)
 
     # Deduplicate while preserving order
     seen = set()
