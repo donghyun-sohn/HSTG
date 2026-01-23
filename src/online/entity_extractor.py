@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-Entity extraction demo for hierarchical schema linking.
+Entity extraction for hierarchical schema linking.
 - Fast, local, rule-based extraction for immediate demos.
-- Optional LLM-based extraction if OpenAI is available.
+- Optional LLM-based extraction via Ollama.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import re
@@ -115,6 +114,16 @@ def extract_entities_llm(query: str, model: str = "llama3.2") -> List[str]:
 
 
 def extract_entities(query: str, mode: str = "auto") -> List[str]:
+    """
+    Extract entities/keywords from a natural language query.
+    
+    Args:
+        query: Natural language question
+        mode: "auto" (try LLM, fallback to rule), "llm", or "rule"
+        
+    Returns:
+        List of extracted keywords
+    """
     if mode == "llm":
         return extract_entities_llm(query)
     if mode == "rule":
@@ -124,22 +133,3 @@ def extract_entities(query: str, mode: str = "auto") -> List[str]:
             return extract_entities_llm(query)
         return extract_entities_rule_based(query)
     raise ValueError("mode must be one of: auto, llm, rule")
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Entity extraction demo")
-    parser.add_argument("--query", required=True, help="Natural language query")
-    parser.add_argument(
-        "--mode",
-        default="auto",
-        choices=["auto", "llm", "rule"],
-        help="Extraction mode",
-    )
-    args = parser.parse_args()
-
-    entities = extract_entities(args.query, mode=args.mode)
-    print(json.dumps(entities, ensure_ascii=True))
-
-
-if __name__ == "__main__":
-    main()
