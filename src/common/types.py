@@ -5,8 +5,19 @@ Type definitions for schema and graph structures.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
+
+
+@dataclass
+class TableNode:
+    """Represents a database table node with columns, comments, and relationships."""
+    name: str
+    columns: List[str] = field(default_factory=list)
+    comments: List[str] = field(default_factory=list)  # Column comments/descriptions
+    raw_ddl: str = ""
+    explicit_fks: List[str] = field(default_factory=list)  # Referenced table names
+    primary_keys: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -22,7 +33,7 @@ class TableInfo:
 class SchemaInfo:
     """Represents a complete database schema."""
     db_id: str
-    tables: Dict[str, TableInfo]  # table_name -> TableInfo
+    tables: Dict[str, TableNode]  # table_name -> TableNode
     schema_text: str = ""  # Raw CREATE TABLE statements
 
 
