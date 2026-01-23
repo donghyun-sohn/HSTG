@@ -15,6 +15,7 @@ class TableNode:
     name: str
     columns: List[str] = field(default_factory=list)
     comments: List[str] = field(default_factory=list)  # Column comments/descriptions
+    column_examples: List[List[Any]] = field(default_factory=list)  # Example data for each column
     raw_ddl: str = ""
     explicit_fks: List[str] = field(default_factory=list)  # Referenced table names
     primary_keys: List[str] = field(default_factory=list)

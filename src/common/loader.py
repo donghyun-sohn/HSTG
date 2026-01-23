@@ -7,8 +7,9 @@ Single-pass reading with generator pattern for memory efficiency.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
-from typing import Iterator, Dict, Any
+from typing import Iterator, Dict, Any, List
 
 
 def iter_bird_data(file_path: str | Path) -> Iterator[Dict[str, Any]]:
@@ -74,3 +75,34 @@ def load_unique_schemas(file_path: str | Path) -> Dict[str, Dict[str, Any]]:
     
     print(f"Found {len(unique_schemas)} unique databases.")
     return unique_schemas
+
+
+def extract_table_names(schema_str: str) -> List[str]:
+    """
+    Extract table names from a schema string (DDL).
+    Quick utility function that doesn't require full parsing.
+    
+    Args:
+        schema_str: Raw CREATE TABLE statements
+        
+    Returns:
+        List of table names found in the schema
+    """
+    table_names = []
+    # Split by semicolon to get individual CREATE TABLE statements
+    ddl_statements = [s.strip() for s in schema_str.split(";") if s.strip()]
+    
+    for ddl in ddl_statements:
+        if not ddl.upper().startswith("CREATE TABLE"):
+            continue
+        
+        # Extract table name using regex
+        table_name_match = re.search(
+            r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:`)?([a-zA-Z0-9_]+)(?:`)?",
+            ddl,
+            re.IGNORECASE,
+        )
+        if table_name_match:
+            table_names.append(table_name_match.group(1))
+    
+    return table_names

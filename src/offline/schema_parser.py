@@ -6,10 +6,73 @@ Parses CREATE TABLE statements into structured TableNode objects.
 
 from __future__ import annotations
 
+import ast
 import re
-from typing import Dict
+from typing import Dict, List, Any
 
 from src.common.types import TableNode, SchemaInfo
+
+
+def _extract_example_data(comment: str) -> List[Any]:
+    """
+    Extract example data from BIRD DDL comment.
+    
+    Handles patterns like:
+    - "-- example: [3, 5]"
+    - "-- example: ['CZK', 'EUR']"
+    - "-- client segment, example: ['SME', 'LAM']"
+    
+    Args:
+        comment: Comment string from DDL
+        
+    Returns:
+        List of example values, or empty list if not found
+    """
+    if not comment:
+        return []
+    
+    # Look for "example:" followed by a list pattern
+    # Pattern: "example:" followed by optional whitespace and then [...]
+    example_pattern = r"example:\s*(\[[^\]]*\])"
+    match = re.search(example_pattern, comment, re.IGNORECASE)
+    
+    if not match:
+        return []
+    
+    example_str = match.group(1)
+    
+    try:
+        # Use ast.literal_eval to safely parse the list
+        # This handles both [3, 5] and ['CZK', 'EUR'] correctly
+        example_list = ast.literal_eval(example_str)
+        if isinstance(example_list, list):
+            return example_list
+        else:
+            # If it's a single value, wrap it in a list
+            return [example_list]
+    except (ValueError, SyntaxError):
+        # If parsing fails, try to extract values manually
+        # This is a fallback for edge cases
+        try:
+            # Remove brackets and split by comma
+            inner = example_str.strip("[]")
+            if not inner:
+                return []
+            # Try to parse each element
+            values = []
+            for item in inner.split(","):
+                item = item.strip().strip("'\"")
+                # Try to convert to number if possible
+                try:
+                    if "." in item:
+                        values.append(float(item))
+                    else:
+                        values.append(int(item))
+                except ValueError:
+                    values.append(item)
+            return values
+        except Exception:
+            return []
 
 
 def parse_bird_schema(schema_str: str, db_id: str) -> SchemaInfo:
@@ -53,6 +116,7 @@ def parse_bird_schema(schema_str: str, db_id: str) -> SchemaInfo:
         # Parse columns, comments, and constraints
         columns = []
         comments = []
+        column_examples = []
         primary_keys = []
         explicit_fks = []
         
@@ -108,17 +172,22 @@ def parse_bird_schema(schema_str: str, db_id: str) -> SchemaInfo:
             
             columns.append(col_name)
             
-            # Extract comment if present
+            # Extract comment and example data if present
             if len(parts) > 1:
                 comment = parts[1].strip()
                 comments.append(comment)
+                # Extract example data from comment
+                example_data = _extract_example_data(comment)
+                column_examples.append(example_data)
             else:
                 comments.append("")
+                column_examples.append([])
         
         tables[table_name] = TableNode(
             name=table_name,
             columns=columns,
             comments=comments,
+            column_examples=column_examples,
             raw_ddl=ddl,
             explicit_fks=explicit_fks,
             primary_keys=primary_keys,

@@ -37,8 +37,20 @@ OUTPUT_DIR = PROJECT_ROOT / "data/processed"
 
 def main() -> None:
     """Main offline processing pipeline."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Build offline graphs and clusters")
+    parser.add_argument(
+        "--strategy",
+        default="reinforced",
+        choices=["binary", "reinforced"],
+        help="Edge weighting strategy: 'binary' (original) or 'reinforced' (proposed)",
+    )
+    args = parser.parse_args()
+    
     print("=" * 60)
     print("Step 1: Offline Graph Construction")
+    print(f"Strategy: {args.strategy}")
     print("=" * 60)
     
     # 1. Load unique schemas
@@ -77,8 +89,8 @@ def main() -> None:
             vectors = dict(zip(table_names, embeddings))
             print(f"  Generated {len(vectors)} embeddings")
             
-            # Step 4: Build hybrid graph
-            G = build_hybrid_graph(schema_info.tables, vectors)
+            # Step 4: Build hybrid graph with specified strategy
+            G = build_hybrid_graph(schema_info.tables, vectors, strategy=args.strategy)
             num_edges = G.number_of_edges()
             num_hard = sum(1 for _, _, d in G.edges(data=True) if d.get("type") == "hard")
             num_soft = num_edges - num_hard
@@ -89,8 +101,8 @@ def main() -> None:
             num_clusters = len(set(partition.values()))
             print(f"  Detected {num_clusters} clusters")
             
-            # Step 6: Save artifacts
-            graph_path = OUTPUT_DIR / "db_graphs" / f"{db_id}.pkl"
+            # Step 6: Save artifacts (include strategy in filename for comparison)
+            graph_path = OUTPUT_DIR / "db_graphs" / f"{db_id}_{args.strategy}.pkl"
             with open(graph_path, "wb") as f:
                 pickle.dump(G, f)
             print(f"  Saved graph to {graph_path}")
@@ -98,12 +110,13 @@ def main() -> None:
             # Convert numpy arrays to lists for JSON serialization
             cluster_data = {
                 "db_id": db_id,
+                "strategy": args.strategy,
                 "partition": partition,
                 "cluster_vectors": {str(k): v.tolist() for k, v in cluster_vectors.items()},
                 "num_clusters": num_clusters,
             }
             
-            cluster_path = OUTPUT_DIR / "clusters" / f"{db_id}.json"
+            cluster_path = OUTPUT_DIR / "clusters" / f"{db_id}_{args.strategy}.json"
             with open(cluster_path, "w", encoding="utf-8") as f:
                 json.dump(cluster_data, f, indent=2, ensure_ascii=False)
             print(f"  Saved clusters to {cluster_path}")
