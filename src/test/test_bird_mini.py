@@ -69,21 +69,37 @@ def main() -> None:
 
     print(f"\nStep 0 complete: Preprocessed {len(preprocessed_schemas)} schemas")
 
+    graphs: Dict[str, Any] = {}
+
     # =========================================================================
     # Step 1: Graph Construction
     # =========================================================================
     # Build hybrid graph for each schema:
-    # - Hard Edges: Explicit FK relationships (weight = 1.0 + semantic_sim * 0.5)
-    # - Soft Edges: Inferred from column name overlap + semantic similarity
-    # - Type Constraint: Only same-type columns can form soft edges
+    # - Node: Table with column-level vectors (semantic_names embedded)
+    # - Hard Edges: fk_mapping, W_hard = 1.0 + Sim_vec * 0.5
+    # - Soft Edges: Type-compatible columns, W_soft = Sim_name*0.6 + Sim_vec*0.4
+    # - Edge metadata: source_col, target_col for JOIN key mapping
     # =========================================================================
     print("\n" + "=" * 80)
     print("Step 1: Graph Construction")
     print("=" * 80)
-    print("TODO: Implement graph construction using preprocessed schemas")
-    print("  - Use semantic names for embedding generation")
-    print("  - Use structural types for type-based edge filtering")
-    print("  - Apply Reinforced Hard Edge Strategy")
+
+    try:
+        from src.offline.graph_builder import build_hybrid_graph
+
+        for db_id, preprocessed in preprocessed_schemas.items():
+            G = build_hybrid_graph(preprocessed)
+            graphs[db_id] = G
+            num_nodes = G.number_of_nodes()
+            num_edges = G.number_of_edges()
+            hard_edges = sum(1 for _, _, d in G.edges(data=True) if d.get("type") == "hard")
+            soft_edges = num_edges - hard_edges
+            print(f"  [{db_id}] {num_nodes} nodes, {num_edges} edges ({hard_edges} hard, {soft_edges} soft)")
+        print(f"\nStep 1 complete: Built graphs for {len(graphs)} databases")
+    except Exception as e:
+        print(f"  Error: {e}")
+        import traceback
+        traceback.print_exc()
 
     # =========================================================================
     # Step 2: Clustering (Super Node Creation)

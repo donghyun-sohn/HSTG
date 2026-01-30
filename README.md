@@ -25,7 +25,7 @@ project_root/
     │   │   ├── preprocessor.py      # Semantic names + structural types
     │   │   └── serializer.py        # Table serialization for embedding
     │   ├── embedder.py              # Vector generation (Ollama)
-    │   ├── graph_builder.py         # Hybrid graph (hard + soft edges)
+    │   ├── graph_builder.py         # Hybrid graph from PreprocessedSchema
     │   ├── clustering.py            # Louvain community detection
     │   ├── build_graph.py           # Main offline pipeline
     │   └── find_missing_fk.py       # Analyze implicit FK relationships
@@ -41,7 +41,7 @@ project_root/
         ├── test_keywords.py         # Keyword extraction test
         ├── test_three_questions.py  # Graph input JSON demo
         ├── inspect_graph.py         # Inspect generated graphs
-        └── compare_strategies.py    # Compare binary vs reinforced
+        └── compare_strategies.py    # Inspect graph and clusters
 ```
 
 ## Setup
@@ -137,15 +137,39 @@ Build graphs and clusters for all databases (one-time preprocessing):
 python -m src.offline.build_graph
 ```
 
-This will:
-- Load unique schemas from `mini_dev-main/finetuning/inference/mini_dev_prompt.jsonl`
-- For each `db_id`:
-  - Create vertices (table names)
-  - Create table indicator vectors
-  - Connect edges (PK-FK relationships + semantic relationships)
-  - Run clustering (semantic similarity, community detection)
-  - Create super cluster indicator vectors
-- Save results to `data/processed/`
+**Pipeline per database:**
+1. Load schema from JSONL → parse → preprocess (Step 0)
+2. Build hybrid graph from `PreprocessedSchema`
+3. Run Louvain clustering
+4. Save to `data/processed/db_graphs/{db_id}.pkl` and `clusters/{db_id}.json`
+
+**Graph construction details (4 sub-steps):**
+
+| Step | Description |
+|------|-------------|
+| **1. Node init & vectorization** | Each table = one node. Embed each column's `semantic_name` (Ollama). Node stores `column_vectors` (per column) and `vector` (mean for clustering). |
+| **2. Hard Edge** | From `fk_mapping`. Connect `(src_table, src_col)` → `(ref_table, ref_col)`. Weight: `W_hard = 1.0 + (Sim_vec × 0.5)`. These are the primary JOIN paths. |
+| **3. Soft Edge** | No explicit FK. Filter: `structural_types` must match. Weight: `W_soft = (Sim_name × 0.6) + (Sim_vec × 0.4)`. Prune if weight ≤ 0.6. |
+| **4. Edge metadata** | Each edge stores `join_keys: [{source_col, target_col, type}]` for later `JOIN ON src.col = tgt.col` generation. |
+
+**Code files used:**
+
+| File | Role |
+|------|------|
+| `src/offline/graph_builder.py` | `build_hybrid_graph(prep_schema)` – node init, hard/soft edges, join_keys |
+| `src/offline/embedder.py` | `get_embeddings_batch()` – Ollama column embedding |
+| `src/offline/clustering.py` | `detect_communities()` – Louvain community detection |
+
+**Node attributes:**
+- `vector`: Table-level vector (mean of column vectors) for clustering
+- `column_vectors`: Dict of column name → embedding
+- `columns`, `structural_types`
+
+**Edge attributes:**
+- `weight`, `type` ("hard" or "soft")
+- `join_keys`: `[{source_col, target_col, type}]`
+
+**TODO for Junho:** `compute_column_vector_similarity()` in `graph_builder.py` – implements vector similarity for `Sim_vec`. Currently a placeholder (returns 0.0).
 
 ### Step 2: Online Query Processing
 
@@ -178,18 +202,18 @@ print(keywords)
 | `python -m src.test.test_keywords` | Keyword extraction test |
 | `python -m src.test.test_three_questions` | Graph input JSON for questions 1471–1473 |
 | `python -m src.test.inspect_graph --db debit_card_specializing` | Inspect generated graph and clusters |
-| `python -m src.test.compare_strategies --db debit_card_specializing` | Compare binary vs reinforced strategies |
+| `python -m src.test.compare_strategies --db debit_card_specializing` | Inspect graph and clusters |
 | `python -m src.offline.find_missing_fk` | Find implicit FK relationships in SQL |
 
 ## Pipeline Overview
 
 | Phase | Module | Command | Output |
 |-------|--------|---------|--------|
-| **Step 0.1** Schema Preprocessing | `schema_preprocessor.py` | `python -m src.test.test_preprocessing` | Semantic names + structural types (demo) |
+| **Step 0.1** Schema Preprocessing | `schema_preprocess/preprocessor.py` | `python -m src.test.test_preprocessing` | Semantic names + structural types (demo) |
 | **Step 1** Offline Graph Build | `build_graph.py` | `python -m src.offline.build_graph` | Graph + clusters saved to `data/processed/` |
 | **Step 2** Online Query | `query_processor.py` | `python -m src.online.query_processor` | Keywords, schema linking, graph input JSON |
 
-Schema preprocessing produces the format used for vector similarity and Reinforced Edge strategy. The graph builder currently uses a simpler serialization; preprocessing will be integrated into the main pipeline in a future update.
+Schema preprocessing feeds directly into the graph builder. Graph uses column-level vectors, FK-based hard edges, and type-constrained soft edges with join key metadata.
 
 ## Notes
 

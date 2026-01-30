@@ -1,180 +1,202 @@
 #!/usr/bin/env python3
 """
-Hybrid graph builder combining hard edges (FK) and soft edges (semantic similarity).
-Supports multiple edge weighting strategies for comparison.
+Hybrid graph builder from preprocessed schema.
+
+Builds graph with:
+- Node: Table (each node has column-level vectors)
+- Hard Edge: FK relationships (W_hard = 1.0 + Sim_vec * 0.5)
+- Soft Edge: Type-compatible, semantically similar columns (W_soft = Sim_name*0.6 + Sim_vec*0.4)
+- Edge Metadata: source_col, target_col for JOIN key mapping
 """
 
 from __future__ import annotations
 
+from typing import Dict, List, Tuple, Any, Optional
+
 import networkx as nx
 import numpy as np
-from typing import Dict, List
 
-from src.common.types import TableNode
+from src.offline.schema_preprocess import (
+    PreprocessedSchema,
+    PreprocessedTable,
+    PreprocessedColumn,
+    get_type_compatible_pairs,
+)
+from src.offline.embedder import get_embeddings_batch
 
 
-def compute_cosine_similarity(v1: np.ndarray, v2: np.ndarray) -> float:
-    """Compute cosine similarity between two vectors."""
-    norm = np.linalg.norm(v1) * np.linalg.norm(v2)
-    return np.dot(v1, v2) / norm if norm > 0 else 0.0
+# =============================================================================
+# TODO for Junho: Vector similarity between two columns
+# =============================================================================
+# This function computes cosine similarity between two column embedding vectors.
+# Used for:
+# - Hard Edge: W_hard = 1.0 + (Sim_vec * 0.5) between FK-linked columns
+# - Soft Edge: W_soft = (Sim_name * 0.6) + (Sim_vec * 0.4) between type-compatible columns
+# =============================================================================
 
 
-def compute_name_overlap(cols1: List[str], cols2: List[str]) -> float:
+def compute_column_vector_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
     """
-    Compute name-based similarity using Jaccard similarity.
-    Heuristic: Boost score if ID/code columns overlap.
-    
+    Compute vector similarity between two column embeddings.
+
+    TODO for Junho: Implement this function.
+
+    Used for:
+    - Hard Edge: W_hard = 1.0 + (Sim_vec * 0.5) between FK-linked columns
+    - Soft Edge: W_soft = (Sim_name * 0.6) + (Sim_vec * 0.4) between type-compatible columns
+
+    Expected: cosine similarity. Typical range [0, 1] or [-1, 1].
+    Current: placeholder returning 0.0 (hard edges get weight 1.0, soft edges use name only).
+
     Args:
-        cols1: Column names from table 1
-        cols2: Column names from table 2
-        
+        vec1: Embedding vector for column 1
+        vec2: Embedding vector for column 2
+
     Returns:
-        Similarity score between 0 and 1
+        Similarity score (e.g. cosine similarity in [0, 1])
     """
-    s1, s2 = set(cols1), set(cols2)
-    intersection = len(s1 & s2)
+    # TODO for Junho: implement vector similarity between two column embeddings
+    return 0.0
+
+
+def _compute_column_name_similarity(col1: str, col2: str) -> float:
+    """
+    Jaccard-like similarity between two column names.
+    Used for W_soft = (Sim_name * 0.6) + (Sim_vec * 0.4).
+    """
+    c1, c2 = col1.lower(), col2.lower()
+    if c1 == c2:
+        return 1.0
+    s1, s2 = set(c1.split("_")), set(c2.split("_"))
+    if not s1 or not s2:
+        return 0.0
+    inter = len(s1 & s2)
     union = len(s1 | s2)
-    
-    score = intersection / union if union > 0 else 0.0
-    
-    # [Heuristic] Boost if ID/code columns overlap
-    for col in (s1 & s2):
-        if "id" in col.lower() or "code" in col.lower():
-            score = min(1.0, score + 0.3)  # Boost
-            
-    return score
+    base = inter / union if union > 0 else 0.0
+    if ("id" in c1 or "code" in c1) and ("id" in c2 or "code" in c2):
+        base = min(1.0, base + 0.3)
+    return base
 
 
-def build_hybrid_graph_binary(
-    tables: Dict[str, TableNode], vectors: Dict[str, np.ndarray]
-) -> nx.Graph:
-    """
-    Strategy 1: Binary Hard/Soft Edge (Original)
-    
-    - Hard edges (FK): weight = 1.0
-    - Soft edges (no FK): weight = name_sim * 0.6 + vec_sim * 0.4 (if > 0.6)
-    
-    This treats all FK relationships equally regardless of semantic similarity.
-    """
-    G = nx.Graph()
-    table_names = list(tables.keys())
-    
-    # 1. Add nodes with vectors
-    for name in table_names:
-        G.add_node(name, vector=vectors[name])
-        
-    # 2. Add edges
-    for i in range(len(table_names)):
-        for j in range(i + 1, len(table_names)):
-            t1_name, t2_name = table_names[i], table_names[j]
-            t1, t2 = tables[t1_name], tables[t2_name]
-            
-            # Check for FK relationship (case-insensitive)
-            t1_fks_lower = [fk.lower() for fk in t1.explicit_fks]
-            t2_fks_lower = [fk.lower() for fk in t2.explicit_fks]
-            is_fk = (t2_name.lower() in t1_fks_lower) or (t1_name.lower() in t2_fks_lower)
-            
-            if is_fk:
-                # Hard Edge: Fixed weight 1.0
-                G.add_edge(t1_name, t2_name, weight=1.0, type="hard")
-            else:
-                # Soft Edge: Name + Semantic similarity
-                vec_sim = compute_cosine_similarity(vectors[t1_name], vectors[t2_name])
-                name_sim = compute_name_overlap(t1.columns, t2.columns)
-                
-                soft_weight = (name_sim * 0.6) + (vec_sim * 0.4)
-                
-                # Threshold: Only connect if similarity > 0.6
-                if soft_weight > 0.6:
-                    G.add_edge(t1_name, t2_name, weight=soft_weight, type="soft")
-                    
-    return G
-
-
-def build_hybrid_graph_reinforced(
-    tables: Dict[str, TableNode], vectors: Dict[str, np.ndarray]
-) -> nx.Graph:
-    """
-    Strategy 2: Reinforced Hard Edge (Proposed)
-    
-    - Hard edges (FK): weight = 1.0 + (vec_sim * 0.5)  [Range: 1.0 ~ 1.5]
-    - Soft edges (no FK): weight = name_sim * 0.6 + vec_sim * 0.4 (if > 0.6)
-    
-    This reinforces FK relationships with semantic similarity, creating a hierarchy:
-    - FK + High semantic similarity → Very strong connection (1.0 ~ 1.5)
-    - FK + Low semantic similarity → Moderate connection (1.0 ~ 1.25)
-    - No FK but high similarity → Inferred connection (0.6 ~ 1.0)
-    
-    Benefits:
-    - Distinguishes tight business relationships (Order-Item) from loose logging links
-    - Maintains structural priority (FK > inferred) while adding flexibility
-    - Improves clustering quality by grouping semantically related tables
-    """
-    G = nx.Graph()
-    table_names = list(tables.keys())
-    
-    # 1. Add nodes with vectors
-    for name in table_names:
-        G.add_node(name, vector=vectors[name])
-        
-    # 2. Add edges
-    for i in range(len(table_names)):
-        for j in range(i + 1, len(table_names)):
-            t1_name, t2_name = table_names[i], table_names[j]
-            t1, t2 = tables[t1_name], tables[t2_name]
-            
-            # Pre-compute semantic similarity (used in both cases)
-            vec_sim = compute_cosine_similarity(vectors[t1_name], vectors[t2_name])
-            
-            # Check for FK relationship (case-insensitive)
-            t1_fks_lower = [fk.lower() for fk in t1.explicit_fks]
-            t2_fks_lower = [fk.lower() for fk in t2.explicit_fks]
-            is_fk = (t2_name.lower() in t1_fks_lower) or (t1_name.lower() in t2_fks_lower)
-            
-            weight = 0.0
-            edge_type = "none"
-            
-            if is_fk:
-                # Reinforced Hard Edge: Base 1.0 + Semantic bonus
-                # Weight range: 1.0 (low semantic) ~ 1.5 (high semantic)
-                weight = 1.0 + (vec_sim * 0.5)
-                edge_type = "hard_reinforced"
-            else:
-                # Soft Edge: Name + Semantic similarity
-                name_sim = compute_name_overlap(t1.columns, t2.columns)
-                soft_weight = (name_sim * 0.6) + (vec_sim * 0.4)
-                
-                # Threshold: Only connect if similarity > 0.6
-                if soft_weight > 0.6:
-                    weight = soft_weight
-                    edge_type = "soft_inferred"
-            
-            # Add edge if weight > 0
-            if weight > 0:
-                G.add_edge(t1_name, t2_name, weight=weight, type=edge_type)
-                    
-    return G
+def _embed_columns(prep_schema: PreprocessedSchema, model: str = "llama3.2") -> Dict[Tuple[str, str], np.ndarray]:
+    """Embed each column's semantic_name. Returns (table, col) -> vector."""
+    texts: List[str] = []
+    keys: List[Tuple[str, str]] = []
+    for table_name, prep_table in prep_schema.tables.items():
+        for col in prep_table.columns:
+            texts.append(col.to_semantic_name())
+            keys.append((table_name, col.column_name))
+    vectors = get_embeddings_batch(texts, model=model)
+    return dict(zip(keys, vectors))
 
 
 def build_hybrid_graph(
-    tables: Dict[str, TableNode],
-    vectors: Dict[str, np.ndarray],
-    strategy: str = "reinforced",
+    prep_schema: PreprocessedSchema,
+    model: str = "llama3.2",
+    soft_threshold: float = 0.6,
 ) -> nx.Graph:
     """
-    Build hybrid graph with specified edge weighting strategy.
-    
-    Args:
-        tables: Dict mapping table_name -> TableNode
-        vectors: Dict mapping table_name -> embedding vector
-        strategy: "binary" or "reinforced" (default: "reinforced")
-        
-    Returns:
-        NetworkX graph with nodes and weighted edges
+    Build hybrid graph from PreprocessedSchema.
+
+    Step 1: Node init & vectorization
+        - Each table is a node
+        - Each column's semantic_name is embedded (Ollama)
+        - Node stores column_vectors, vector (mean for clustering)
+
+    Step 2: Hard Edge (FK)
+        - From fk_mapping
+        - W_hard = 1.0 + (Sim_vec * 0.5)
+        - Edge attr: join_keys with source_col, target_col, type="hard"
+
+    Step 3: Soft Edge (semantic inference)
+        - Type-compatible column pairs only
+        - W_soft = (Sim_name * 0.6) + (Sim_vec * 0.4)
+        - Prune: weight <= soft_threshold removed
+
+    Step 4: Edge metadata
+        - join_keys: source_col, target_col for JOIN key mapping
     """
-    if strategy == "binary":
-        return build_hybrid_graph_binary(tables, vectors)
-    elif strategy == "reinforced":
-        return build_hybrid_graph_reinforced(tables, vectors)
-    else:
-        raise ValueError(f"Unknown strategy: {strategy}. Use 'binary' or 'reinforced'")
+    G = nx.Graph()
+    tables = prep_schema.tables
+    fk_mapping = prep_schema.fk_mapping
+
+    column_vectors = _embed_columns(prep_schema, model=model)
+
+    for table_name, prep_table in tables.items():
+        table_col_vecs = {}
+        vecs_for_centroid = []
+        for col in prep_table.columns:
+            vec = column_vectors.get((table_name, col.column_name))
+            table_col_vecs[col.column_name] = vec
+            if vec is not None and len(vec) > 0:
+                vecs_for_centroid.append(vec)
+        default_dim = len(next(iter(column_vectors.values()), np.zeros(256))) if column_vectors else 256
+        table_vector = np.mean(vecs_for_centroid, axis=0) if vecs_for_centroid else np.zeros(default_dim)
+        G.add_node(
+            table_name,
+            vector=table_vector,
+            column_vectors=table_col_vecs,
+            columns=[c.column_name for c in prep_table.columns],
+            structural_types=prep_table.structural_types,
+        )
+
+    for (src_table, src_col), (ref_table, ref_col) in fk_mapping.items():
+        vec_src = column_vectors.get((src_table, src_col))
+        vec_ref = column_vectors.get((ref_table, ref_col))
+        sim_vec = compute_column_vector_similarity(
+            vec_src if vec_src is not None else np.zeros(1),
+            vec_ref if vec_ref is not None else np.zeros(1),
+        )
+        weight = 1.0 + (sim_vec * 0.5)
+
+        if G.has_edge(src_table, ref_table):
+            existing = G.edges[src_table, ref_table]
+            if weight > existing.get("weight", 0):
+                G.edges[src_table, ref_table]["weight"] = weight
+                join_keys = G.edges[src_table, ref_table].get("join_keys", [])
+                join_keys.append({"source_col": src_col, "target_col": ref_col, "type": "hard"})
+        else:
+            G.add_edge(
+                src_table, ref_table,
+                weight=weight, type="hard",
+                join_keys=[{"source_col": src_col, "target_col": ref_col, "type": "hard"}],
+            )
+
+    compatible_pairs = get_type_compatible_pairs(prep_schema)
+    table_pairs: Dict[Tuple[str, str], List[Tuple[str, str, str, str]]] = {}
+    for col1_fqn, type1, col2_fqn, type2 in compatible_pairs:
+        t1, c1 = col1_fqn.split(".", 1)
+        t2, c2 = col2_fqn.split(".", 1)
+        if t1 > t2:
+            t1, t2, c1, c2 = t2, t1, c2, c1
+        key = (t1, t2)
+        if key not in table_pairs:
+            table_pairs[key] = []
+        table_pairs[key].append((c1, c2, col1_fqn, col2_fqn))
+
+    for (t1, t2), pairs in table_pairs.items():
+        if G.has_edge(t1, t2):
+            continue
+        best_weight = 0.0
+        best_join = None
+        for c1, c2, fqn1, fqn2 in pairs:
+            vec1 = column_vectors.get((t1, c1))
+            vec2 = column_vectors.get((t2, c2))
+            sim_name = _compute_column_name_similarity(c1, c2)
+            sim_vec = compute_column_vector_similarity(
+                vec1 if vec1 is not None else np.zeros(1),
+                vec2 if vec2 is not None else np.zeros(1),
+            )
+            w = (sim_name * 0.6) + (sim_vec * 0.4)
+            if w > best_weight:
+                best_weight = w
+                best_join = (c1, c2)
+        if best_weight > soft_threshold and best_join:
+            c1, c2 = best_join
+            G.add_edge(
+                t1, t2,
+                weight=best_weight, type="soft",
+                join_keys=[{"source_col": c1, "target_col": c2, "type": "soft"}],
+            )
+
+    return G
