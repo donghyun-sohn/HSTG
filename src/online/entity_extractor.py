@@ -77,54 +77,26 @@ def _ollama_available() -> bool:
         return False
 
 
-def extract_entities_llm(
-    query: str, 
-    model: str = "llama3.2",
-    table_names: List[str] | None = None
-) -> List[str]:
+def extract_entities_llm(query: str, model: str = "llama3.2") -> List[str]:
     """
-    Extract entities using LLM (Ollama).
+    Extract entities using LLM (Ollama) from the question only.
     
     Args:
         query: Natural language question
         model: Ollama model name
-        table_names: Optional list of table names from the database schema.
-                     If provided, the LLM will be instructed to prioritize
-                     keywords that match or relate to these table names.
     
     Returns:
         List of extracted keywords
     """
-    # Build prompt with table context if available
-    if table_names and len(table_names) > 0:
-        table_list = ", ".join(table_names)
-        prompt = (
-            "Task: Extract ALL possible database search keywords from the query.\n"
-            "Instructions:\n"
-            "1. Map verbs to business concepts (e.g., 'bought' -> 'transaction', 'purchase').\n"
-            "2. Extract ALL specific nouns, adjectives, and domain terms.\n"
-            "3. CRITICAL: The database contains these tables: " + table_list + "\n"
-            "   - For EACH table name, extract keywords that could relate to it (exact matches, variations, synonyms, related concepts).\n"
-            "   - Include singular/plural forms (customer/customers, product/products).\n"
-            "   - Include abbreviations and full forms (e.g., 'SME' and 'small medium enterprise').\n"
-            "   - Extract column-like terms (e.g., 'ID', 'Date', 'Amount', 'Price', 'Currency').\n"
-            "   - Extract domain-specific terms from the query that might map to table concepts.\n"
-            "   - Be EXTREMELY comprehensive: include ANY keyword that MIGHT be relevant, even if you're only 20% sure.\n"
-            "   - Extract as many keywords as possible - aim for 10-20 keywords minimum.\n"
-            "4. OUTPUT FORMAT: ONLY comma-separated words. NO intro text. NO explanations.\n\n"
-            f"Query: {query}\n"
-            "Keywords:"
-        )
-    else:
-        prompt = (
-            "Task: Extract database search keywords from the query.\n"
-            "Instructions:\n"
-            "1. Map verbs to business concepts (e.g., 'bought' -> 'transaction').\n"
-            "2. Extract specific nouns (e.g., 'customer', 'product').\n"
-            "3. OUTPUT FORMAT: ONLY comma-separated words. NO intro text. NO explanations.\n\n"
-            f"Query: {query}\n"
-            "Keywords:"
-        )
+    prompt = (
+        "Task: Extract database search keywords from the query.\n"
+        "Instructions:\n"
+        "1. Map verbs to business concepts (e.g., 'bought' -> 'transaction').\n"
+        "2. Extract specific nouns (e.g., 'customer', 'product').\n"
+        "3. OUTPUT FORMAT: ONLY comma-separated words. NO intro text. NO explanations.\n\n"
+        f"Query: {query}\n"
+        "Keywords:"
+    )
     payload = json.dumps(
         {
             "model": model,
@@ -173,39 +145,30 @@ def extract_structured_entities_llm(
     query: str,
     evidence: str = "",
     model: str = "llama3.2",
-    table_names: List[str] | None = None,
 ) -> Dict[str, Any]:
     """
-    Extract structured entities from query and evidence using LLM.
+    Extract structured entities from the question (and optional evidence) using LLM.
     Returns a structured JSON with concepts, values, operations, and potential columns.
     
     Args:
         query: Natural language question
         evidence: Optional evidence/formula hint from BIRD dataset
         model: Ollama model name
-        table_names: Optional list of table names from the database schema
     
     Returns:
         Dict with keys: concepts, values, operations, potential_columns
     """
-    # Build prompt for structured extraction
-    table_context = ""
-    if table_names and len(table_names) > 0:
-        table_list = ", ".join(table_names)
-        table_context = f"\n\nThe database contains these tables: {table_list}"
-    
     evidence_context = ""
     if evidence:
         evidence_context = f"\n\nEvidence/Formula: {evidence}"
     
     prompt = (
-        "Task: Extract structured information from the query and evidence.\n"
+        "Task: Extract structured information from the query.\n"
         "Instructions:\n"
         "1. Extract CONCEPTS: domain entities, table-like terms, business concepts (e.g., 'customers', 'transaction', 'product').\n"
         "2. Extract VALUES: specific literal values mentioned (e.g., 'EUR', 'CZK', '2012', 'SME').\n"
         "3. Extract OPERATIONS: SQL operations implied (e.g., 'COUNT', 'SUM', 'AVG', 'DIVIDE', 'RATIO', 'MAX', 'MIN').\n"
         "4. Extract POTENTIAL_COLUMNS: column names that might be referenced (e.g., 'Currency', 'Date', 'Amount', 'Price').\n"
-        f"{table_context}"
         f"{evidence_context}"
         "\n\nOUTPUT FORMAT: Return ONLY a valid JSON object with these exact keys:\n"
         '{\n'
@@ -273,29 +236,23 @@ def extract_structured_entities_llm(
     }
 
 
-def extract_entities(
-    query: str, 
-    mode: str = "auto",
-    table_names: List[str] | None = None
-) -> List[str]:
+def extract_entities(query: str, mode: str = "auto") -> List[str]:
     """
     Extract entities/keywords from a natural language query.
     
     Args:
         query: Natural language question
         mode: "auto" (try LLM, fallback to rule), "llm", or "rule"
-        table_names: Optional list of table names from the database schema.
-                     Used to guide LLM extraction to prioritize relevant keywords.
         
     Returns:
         List of extracted keywords
     """
     if mode == "llm":
-        return extract_entities_llm(query, table_names=table_names)
+        return extract_entities_llm(query)
     if mode == "rule":
         return extract_entities_rule_based(query)
     if mode == "auto":
         if _ollama_available():
-            return extract_entities_llm(query, table_names=table_names)
+            return extract_entities_llm(query)
         return extract_entities_rule_based(query)
     raise ValueError("mode must be one of: auto, llm, rule")

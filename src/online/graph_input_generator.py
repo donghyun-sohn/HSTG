@@ -33,12 +33,10 @@ def generate_graph_input(
     Returns:
         Structured JSON for graph traversal
     """
-    # Step 1: Extract structured entities
-    table_names = list(schema_info.tables.keys())
+    # Step 1: Extract structured entities from question only
     structured_entities = extract_structured_entities_llm(
         query=question,
         evidence=evidence,
-        table_names=table_names,
     )
     
     # Step 2: Build graph anchors

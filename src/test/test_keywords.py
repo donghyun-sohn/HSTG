@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.common.loader import iter_bird_data, extract_table_names
+from src.common.loader import iter_bird_data
 from src.online.entity_extractor import extract_entities
 
 # Get project root (go up from src/test/)
@@ -34,32 +34,24 @@ def main() -> None:
         if count >= limit:
             break
 
-        question = item.get("question", "").strip()
+        full_question = item.get("full_question", item.get("question", "")).strip()
         db_id = item.get("db_id", "")
         question_id = item.get("question_id", "?")
-        schema_str = item.get("schema", "")
 
-        if not question or not db_id:
+        if not full_question or not db_id:
             continue
 
-        # Extract table names from schema
-        table_names = []
-        if schema_str:
-            table_names = extract_table_names(schema_str)
-
         print(f"[{question_id}] DB: {db_id}")
-        print(f"Question: {question}")
-        if table_names:
-            print(f"Available tables: {', '.join(table_names)}")
-        print(f"Extracting keywords with Ollama...")
+        print(f"Full question: {full_question}")
+        print("Extracting keywords with Ollama...")
 
         try:
-            keywords = extract_entities(question, mode="llm", table_names=table_names)
+            keywords = extract_entities(full_question, mode="llm")
             print(f"Keywords: {keywords}")
         except Exception as e:
             print(f"Error: {e}")
             print("Falling back to rule-based extraction...")
-            keywords = extract_entities(question, mode="rule")
+            keywords = extract_entities(full_question, mode="rule")
             print(f"Keywords (rule-based): {keywords}")
 
         print("-" * 60)
