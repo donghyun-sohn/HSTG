@@ -2,11 +2,17 @@
 """
 Table serialization for embedding generation.
 Converts TableNode objects into text representations for vectorization.
+
+Supports two formats:
+1. Legacy: Simple table serialization (Table + Columns + Notes + Examples)
+2. Preprocessed: Semantic names with FQN, PK/FK tags, and examples (optimized for similarity)
 """
 
 from __future__ import annotations
 
-from src.common.types import TableNode, SchemaInfo
+from typing import Dict
+
+from src.common.types import TableNode, SchemaInfo, PreprocessedTable
 
 
 def serialize_table(table: TableNode) -> str:
@@ -60,3 +66,49 @@ def serialize_schema(schema: SchemaInfo) -> Dict[str, str]:
         Dict mapping table_name -> serialized text
     """
     return {name: serialize_table(table) for name, table in schema.tables.items()}
+
+
+# ============================================================================
+# Preprocessed Format Serialization (Optimized for Graph Construction)
+# ============================================================================
+
+def serialize_preprocessed_table(prep_table: PreprocessedTable) -> str:
+    """
+    Serialize a preprocessed table for embedding.
+    
+    This format is optimized for vector similarity search as it includes:
+    - Fully Qualified Names (FQN) for each column
+    - PK/FK structural annotations
+    - Example data from DDL comments
+    
+    Args:
+        prep_table: Preprocessed table with semantic names
+        
+    Returns:
+        String optimized for semantic embedding
+    """
+    lines = [
+        f"Table Context: {prep_table.table_name} ({prep_table.context})",
+        "Columns:"
+    ]
+    
+    for sem_name in prep_table.semantic_names:
+        lines.append(f"  - {sem_name}")
+    
+    return "\n".join(lines)
+
+
+def serialize_preprocessed_schema(tables: Dict[str, PreprocessedTable]) -> Dict[str, str]:
+    """
+    Serialize all preprocessed tables.
+    
+    Args:
+        tables: Dict of table_name -> PreprocessedTable
+        
+    Returns:
+        Dict mapping table_name -> serialized text for embedding
+    """
+    return {
+        table_name: serialize_preprocessed_table(prep_table)
+        for table_name, prep_table in tables.items()
+    }

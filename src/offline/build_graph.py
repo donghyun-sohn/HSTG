@@ -23,8 +23,7 @@ import pickle
 from pathlib import Path
 
 from src.common.loader import load_unique_schemas
-from src.offline.schema_parser import parse_bird_schema
-from src.offline.serializer import serialize_schema
+from src.offline.schema_preprocess import parse_bird_schema, serialize_schema
 from src.offline.embedder import get_embeddings_batch
 from src.offline.graph_builder import build_hybrid_graph
 from src.offline.clustering import detect_communities

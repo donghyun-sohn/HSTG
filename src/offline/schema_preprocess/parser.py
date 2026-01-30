@@ -8,9 +8,35 @@ from __future__ import annotations
 
 import ast
 import re
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 
 from src.common.types import TableNode, SchemaInfo
+
+
+def _extract_column_type(col_definition: str) -> str:
+    """
+    Extract and normalize the data type from a column definition string.
+    
+    Args:
+        col_definition: Column definition like "CustomerID integer" or "`Date` text"
+        
+    Returns:
+        Normalized data type string (lowercase)
+    """
+    clean_def = col_definition.replace("`", "").strip()
+    parts = clean_def.split()
+    if len(parts) < 2:
+        return "unknown"
+    type_str = parts[1].lower()
+    type_mapping = {
+        "int": "integer", "bigint": "integer", "smallint": "integer", "tinyint": "integer",
+        "varchar": "text", "char": "text", "string": "text",
+        "float": "real", "double": "real", "decimal": "real", "numeric": "real",
+        "boolean": "integer", "bool": "integer",
+        "datetime": "text", "timestamp": "text", "date": "text", "time": "text",
+    }
+    base_type = type_str.split("(")[0]
+    return type_mapping.get(base_type, base_type)
 
 
 def _extract_example_data(comment: str) -> List[Any]:
@@ -113,12 +139,14 @@ def parse_bird_schema(schema_str: str, db_id: str) -> SchemaInfo:
         
         body = ddl[body_start + 1 : body_end]
         
-        # Parse columns, comments, and constraints
+        # Parse columns, comments, constraints, column types, and FK details
         columns = []
         comments = []
         column_examples = []
+        column_types = []
         primary_keys = []
         explicit_fks = []
+        fk_column_refs: Dict[str, Tuple[str, str]] = {}
         
         # Handle multi-line definitions and constraints
         lines = [line.strip() for line in body.split("\n") if line.strip()]
@@ -132,53 +160,45 @@ def parse_bird_schema(schema_str: str, db_id: str) -> SchemaInfo:
             
             # Check for PRIMARY KEY
             if "PRIMARY KEY" in line_upper:
-                # Extract column names from PRIMARY KEY (col1, col2)
                 pk_match = re.search(r"PRIMARY\s+KEY\s*\(([^)]+)\)", line_upper)
                 if pk_match:
                     pk_cols = [c.strip().replace("`", "") for c in pk_match.group(1).split(",")]
                     primary_keys.extend(pk_cols)
                 continue
             
-            # Check for FOREIGN KEY constraint
+            # Check for FOREIGN KEY constraint - extract full (local_col, ref_table, ref_col)
             if "FOREIGN KEY" in line_upper or "CONSTRAINT" in line_upper:
-                # Extract referenced table name (case-sensitive from original line)
-                fk_match = re.search(
-                    r"REFERENCES\s+(?:`)?([a-zA-Z0-9_]+)(?:`)?",
-                    line,
-                    re.IGNORECASE,
-                )
+                fk_pattern = r"FOREIGN\s+KEY\s*\(([^)]+)\)\s*REFERENCES\s+(?:`)?(\w+)(?:`)?\s*\(([^)]+)\)"
+                fk_match = re.search(fk_pattern, line, re.IGNORECASE)
                 if fk_match:
-                    ref_table = fk_match.group(1)
+                    local_col = fk_match.group(1).strip().replace("`", "")
+                    ref_table = fk_match.group(2).strip().replace("`", "")
+                    ref_col = fk_match.group(3).strip().replace("`", "")
+                    fk_column_refs[local_col.upper()] = (ref_table, ref_col)
                     if ref_table not in explicit_fks:
                         explicit_fks.append(ref_table)
                 continue
             
             # Parse regular column definition
-            # Format: "ColumnName type, -- comment" or "`ColumnName` type, -- comment"
-            # Split by '--' to separate definition from comment
             parts = line.split("--", 1)
             col_def = parts[0].strip().rstrip(",")
             
-            # Extract column name (first word, remove backticks)
             col_parts = col_def.split()
             if not col_parts:
                 continue
             
             col_name = col_parts[0].replace("`", "").strip()
             
-            # Skip constraint keywords
             if col_name.upper() in ["PRIMARY", "CONSTRAINT", "FOREIGN", "KEY", "UNIQUE", "CHECK"]:
                 continue
             
             columns.append(col_name)
+            column_types.append(_extract_column_type(col_def))
             
-            # Extract comment and example data if present
             if len(parts) > 1:
                 comment = parts[1].strip()
                 comments.append(comment)
-                # Extract example data from comment
-                example_data = _extract_example_data(comment)
-                column_examples.append(example_data)
+                column_examples.append(_extract_example_data(comment))
             else:
                 comments.append("")
                 column_examples.append([])
@@ -188,8 +208,10 @@ def parse_bird_schema(schema_str: str, db_id: str) -> SchemaInfo:
             columns=columns,
             comments=comments,
             column_examples=column_examples,
+            column_types=column_types,
             raw_ddl=ddl,
             explicit_fks=explicit_fks,
+            fk_column_refs=fk_column_refs,
             primary_keys=primary_keys,
         )
     

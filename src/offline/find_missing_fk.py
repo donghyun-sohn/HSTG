@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
 from src.common.loader import iter_bird_data
-from src.offline.schema_parser import parse_bird_schema
+from src.offline.schema_preprocess import parse_bird_schema
 
 # Get project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent

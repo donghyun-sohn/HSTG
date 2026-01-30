@@ -19,14 +19,29 @@ project_root/
     │   └── types.py                 # Schema, Table data classes
     │
     ├── offline/                     # [Preprocessing] Graph & clustering
-    │   └── build_graph.py           # Build graphs per DB
+    │   ├── schema_preprocess/       # Schema preprocessing package
+    │   │   ├── __init__.py          # Package exports
+    │   │   ├── parser.py            # DDL parsing (CREATE TABLE → TableNode)
+    │   │   ├── preprocessor.py      # Semantic names + structural types
+    │   │   └── serializer.py        # Table serialization for embedding
+    │   ├── embedder.py              # Vector generation (Ollama)
+    │   ├── graph_builder.py         # Hybrid graph (hard + soft edges)
+    │   ├── clustering.py            # Louvain community detection
+    │   ├── build_graph.py           # Main offline pipeline
+    │   └── find_missing_fk.py       # Analyze implicit FK relationships
     │
     ├── online/                      # [Inference] Search & path finding
-    │   ├── entity_extractor.py     # Keyword extraction
-    │   └── query_processor.py      # Process questions and generate SQL
+    │   ├── entity_extractor.py      # Keyword extraction (Ollama)
+    │   ├── schema_linking.py        # Entity-to-schema matching
+    │   ├── graph_input_generator.py # JSON input for graph traversal
+    │   └── query_processor.py       # Process questions and generate SQL
     │
-    └── test/                         # Test scripts
-        └── test_keywords.py         # Keyword extraction test
+    └── test/                        # Test & demo scripts
+        ├── test_preprocessing.py    # Schema preprocessing demo
+        ├── test_keywords.py         # Keyword extraction test
+        ├── test_three_questions.py  # Graph input JSON demo
+        ├── inspect_graph.py         # Inspect generated graphs
+        └── compare_strategies.py    # Compare binary vs reinforced
 ```
 
 ## Setup
@@ -48,6 +63,71 @@ ollama run llama3.2
 ```
 
 ## Usage
+
+### Step 0.1: Schema Preprocessing (Optional Demo)
+
+Transform parsed schema into the format optimized for graph construction and similarity search:
+
+- **Semantic Names**: Fully Qualified Names (FQN) with PK/FK annotations and example data
+- **Structural Types**: Column data types for hard constraints
+
+Run the preprocessing demo:
+
+```bash
+python -m src.test.test_preprocessing
+```
+
+This reads `mini_dev-main/finetuning/inference/mini_dev_prompt.jsonl`, parses schemas, and prints:
+- Semantic names per table (e.g. `yearmonth.CustomerID (PK, references customers.CustomerID) (e.g. 39, 63)`)
+- Structural types (e.g. `["integer", "text", "real"]`)
+- FK mappings for hard edge creation
+- Type-compatible pairs for soft edge candidates
+
+**Code files used:**
+
+| File | Role |
+|------|------|
+| `src/common/loader.py` | `load_unique_schemas()` - Load unique DB schemas from JSONL |
+| `src/offline/schema_preprocess/parser.py` | `parse_bird_schema()` - Parse DDL into `TableNode` (columns, PK, FK, examples) |
+| `src/offline/schema_preprocess/preprocessor.py` | `preprocess_schema()` - Transform to semantic names + structural types |
+| `src/offline/schema_preprocess/serializer.py` | `serialize_schema()` - Table serialization for embedding |
+| `src/common/types.py` | Data classes: `TableNode`, `SchemaInfo`, `PreprocessedTable`, `PreprocessedColumn` |
+
+**Data flow:**
+
+```
+JSONL ──→ loader.py ──→ parser.py ──→ preprocessor.py
+              │             │               │
+         {db_id: ...}  SchemaInfo    PreprocessedSchema
+                       (TableNode)   (semantic_names, structural_types)
+```
+
+**Preprocessed output: data types and structure**
+
+The result is a `PreprocessedSchema` object per database. It is passed to downstream steps (graph building, embedding) as follows:
+
+| Type | Structure | Purpose |
+|------|-----------|---------|
+| `PreprocessedSchema` | `db_id: str`, `tables: Dict[str, PreprocessedTable]`, `fk_mapping: Dict[Tuple[str,str], Tuple[str,str]]` | Root object for one database |
+| `PreprocessedTable` | `table_name`, `context`, `semantic_names: List[str]`, `structural_types: List[str]`, `columns: List[PreprocessedColumn]` | One table with semantic names and types |
+| `PreprocessedColumn` | `table_name`, `column_name`, `data_type`, `is_primary_key`, `foreign_key_ref`, `fk_points_to_pk`, `examples` | One column; `fk_points_to_pk` True if FK references a PK (for future graph weight boost) |
+
+**Example (single table):**
+
+```
+PreprocessedSchema(db_id="debit_card_specializing", tables={...}, fk_mapping={...})
+  └── tables["yearmonth"]: PreprocessedTable
+        ├── semantic_names: ["yearmonth.CustomerID (PK, references customers.CustomerID) (e.g. 39, 63)", ...]
+        ├── structural_types: ["integer", "text", "real"]
+        └── columns: [PreprocessedColumn(...), ...]
+```
+
+**Downstream usage:**
+
+- `semantic_names` → Embedding input (vectorization for similarity search)
+- `structural_types` → Type constraint filter (same-type columns only for soft edges)
+- `fk_mapping` → Hard edge creation `{(src_table, src_col): (ref_table, ref_col)}`
+- `serialize_preprocessed_table()` → Produces embedding-ready string from `PreprocessedTable`
 
 ### Step 1: Offline Graph Construction
 
@@ -89,6 +169,27 @@ from src.online.entity_extractor import extract_entities
 keywords = extract_entities("Which customer bought the most expensive product?", mode="rule")
 print(keywords)
 ```
+
+### Other Test Commands
+
+| Command | Description |
+|---------|-------------|
+| `python -m src.test.test_preprocessing` | Schema preprocessing demo (Step 0.1) |
+| `python -m src.test.test_keywords` | Keyword extraction test |
+| `python -m src.test.test_three_questions` | Graph input JSON for questions 1471–1473 |
+| `python -m src.test.inspect_graph --db debit_card_specializing` | Inspect generated graph and clusters |
+| `python -m src.test.compare_strategies --db debit_card_specializing` | Compare binary vs reinforced strategies |
+| `python -m src.offline.find_missing_fk` | Find implicit FK relationships in SQL |
+
+## Pipeline Overview
+
+| Phase | Module | Command | Output |
+|-------|--------|---------|--------|
+| **Step 0.1** Schema Preprocessing | `schema_preprocessor.py` | `python -m src.test.test_preprocessing` | Semantic names + structural types (demo) |
+| **Step 1** Offline Graph Build | `build_graph.py` | `python -m src.offline.build_graph` | Graph + clusters saved to `data/processed/` |
+| **Step 2** Online Query | `query_processor.py` | `python -m src.online.query_processor` | Keywords, schema linking, graph input JSON |
+
+Schema preprocessing produces the format used for vector similarity and Reinforced Edge strategy. The graph builder currently uses a simpler serialization; preprocessing will be integrated into the main pipeline in a future update.
 
 ## Notes
 
