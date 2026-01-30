@@ -31,31 +31,32 @@ class PreprocessedColumn:
     fk_points_to_pk: bool = True  # True if FK references a PK column (higher weight in graph)
     examples: List[Any] = field(default_factory=list)
     
-    def to_semantic_name(self) -> str:
+    def to_semantic_name(
+        self,
+        include_examples: bool = False,
+        fk_in_semantics: bool = False,
+    ) -> str:
         """
         Generate the semantic name string for embedding.
         
-        Uses natural language (e.g. "references x.y") for better LLM/embedding sensitivity.
-        Format: "table.column (PK) references target.column (e.g. 'val1', 'val2')"
+        Args:
+            include_examples: If True, append (e.g. 'val1', 'val2') from column examples.
+            fk_in_semantics: If True, append (references target.column) for FK columns.
         """
         parts = [f"{self.table_name}.{self.column_name}"]
         
-        # Add structural tags
         tags = []
         if self.is_primary_key:
             tags.append("PK")
-        if self.foreign_key_ref:
-            # Use "references" for better embedding model understanding
+        if fk_in_semantics and self.foreign_key_ref:
             tags.append(f"references {self.foreign_key_ref}")
         
         if tags:
             parts.append(f"({', '.join(tags)})")
         
-        # Add example data if available
-        if self.examples:
-            # Format examples nicely
+        if include_examples and self.examples:
             formatted_examples = []
-            for ex in self.examples[:3]:  # Limit to 3 examples
+            for ex in self.examples[:3]:
                 if isinstance(ex, str):
                     formatted_examples.append(f"'{ex}'")
                 else:
@@ -133,16 +134,18 @@ def _infer_table_context(table_node: TableNode) -> str:
     return "General data"
 
 
-def preprocess_schema(schema_info: SchemaInfo) -> PreprocessedSchema:
+def preprocess_schema(
+    schema_info: SchemaInfo,
+    include_examples: bool = False,
+    fk_in_semantics: bool = False,
+) -> PreprocessedSchema:
     """
     Preprocess a parsed schema into the format optimized for graph construction.
     
-    This function transforms each table into:
-    1. Semantic Names: FQN with PK/FK annotations and example data (for embedding)
-    2. Structural Types: Column data types (for hard constraints)
-    
     Args:
         schema_info: Parsed schema information
+        include_examples: If True, add (e.g. ...) to semantic names. Default False.
+        fk_in_semantics: If True, add (references x.y) to semantic names. Default False.
         
     Returns:
         PreprocessedSchema with semantic names and structural types per table
@@ -194,7 +197,12 @@ def preprocess_schema(schema_info: SchemaInfo) -> PreprocessedSchema:
             )
             
             preprocessed_columns.append(prep_col)
-            semantic_names.append(prep_col.to_semantic_name())
+            semantic_names.append(
+                prep_col.to_semantic_name(
+                    include_examples=include_examples,
+                    fk_in_semantics=fk_in_semantics,
+                )
+            )
             structural_types.append(data_type)
         
         # Infer table context

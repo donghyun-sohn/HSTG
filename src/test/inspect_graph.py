@@ -160,7 +160,7 @@ def main() -> None:
     G = load_graph(db_id)
     if not G:
         print(f"Error: Graph not found for {db_id}")
-        print("Run 'python -m src.offline.build_graph' first.")
+        print("Run 'python -m src.test.test_bird_mini' first.")
         return
     
     # Load clusters

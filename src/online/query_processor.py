@@ -131,7 +131,7 @@ def main() -> None:
         if clusters:
             print(f"  Clusters loaded: {len(clusters.get('clusters', []))} super clusters")
         else:
-            print(f"  Clusters: Not found (run build_graph first)")
+            print(f"  Clusters: Not found (run test_bird_mini first)")
         
         print("-" * 60)
         print()

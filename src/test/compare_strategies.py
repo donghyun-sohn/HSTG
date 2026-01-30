@@ -45,7 +45,7 @@ def inspect_graph(db_id: str) -> None:
     clusters = load_clusters(db_id)
 
     if not G:
-        print("Error: Graph not found. Run build_graph first.")
+        print("Error: Graph not found. Run 'python -m src.test.test_bird_mini' first.")
         return
 
     print(f"\nNodes: {G.number_of_nodes()}")

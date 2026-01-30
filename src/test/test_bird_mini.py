@@ -12,6 +12,7 @@ This script demonstrates the complete HSTG pipeline:
 from __future__ import annotations
 
 import json
+import pickle
 from pathlib import Path
 from typing import Dict, Any
 
@@ -112,10 +113,41 @@ def main() -> None:
     print("\n" + "=" * 80)
     print("Step 2: Clustering (Super Node Creation)")
     print("=" * 80)
-    print("TODO: Implement Louvain clustering on hybrid graph")
-    print("  - Detect communities using edge weights")
-    print("  - Compute cluster centroid vectors")
-    print("  - Save artifacts to data/processed/")
+
+    if not graphs:
+        print("  Skipped: No graphs from Step 1")
+    else:
+        try:
+            from src.offline.clustering import detect_communities
+
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            (OUTPUT_DIR / "db_graphs").mkdir(parents=True, exist_ok=True)
+            (OUTPUT_DIR / "clusters").mkdir(parents=True, exist_ok=True)
+
+            for db_id, G in graphs.items():
+                partition, cluster_vectors = detect_communities(G)
+                num_clusters = len(set(partition.values()))
+
+                graph_path = OUTPUT_DIR / "db_graphs" / f"{db_id}.pkl"
+                with open(graph_path, "wb") as f:
+                    pickle.dump(G, f)
+
+                cluster_data = {
+                    "db_id": db_id,
+                    "partition": partition,
+                    "cluster_vectors": {str(k): v.tolist() for k, v in cluster_vectors.items()},
+                    "num_clusters": num_clusters,
+                }
+                cluster_path = OUTPUT_DIR / "clusters" / f"{db_id}.json"
+                with open(cluster_path, "w", encoding="utf-8") as f:
+                    json.dump(cluster_data, f, indent=2, ensure_ascii=False)
+
+                print(f"  [{db_id}] {num_clusters} clusters, saved to {graph_path.name}, {cluster_path.name}")
+            print(f"\nStep 2 complete: Saved graphs and clusters for {len(graphs)} databases")
+        except Exception as e:
+            print(f"  Error: {e}")
+            import traceback
+            traceback.print_exc()
 
     # =========================================================================
     # Step 3: Online Query Processing

@@ -27,7 +27,6 @@ project_root/
     │   ├── embedder.py              # Vector generation (Ollama)
     │   ├── graph_builder.py         # Hybrid graph from PreprocessedSchema
     │   ├── clustering.py            # Louvain community detection
-    │   ├── build_graph.py           # Main offline pipeline
     │   └── find_missing_fk.py       # Analyze implicit FK relationships
     │
     ├── online/                      # [Inference] Search & path finding
@@ -134,8 +133,10 @@ PreprocessedSchema(db_id="debit_card_specializing", tables={...}, fk_mapping={..
 Build graphs and clusters for all databases (one-time preprocessing):
 
 ```bash
-python -m src.offline.build_graph
+python -m src.test.test_bird_mini
 ```
+
+This runs the full pipeline: Step 0 (preprocess) + Step 1 (graph) + Step 2 (clustering + save).
 
 **Pipeline per database:**
 1. Load schema from JSONL → parse → preprocess (Step 0)
@@ -198,6 +199,7 @@ print(keywords)
 
 | Command | Description |
 |---------|-------------|
+| `python -m src.test.test_bird_mini` | **Main pipeline**: Step 0 + 1 + 2 (preprocess, graph, clustering, save) |
 | `python -m src.test.test_preprocessing` | Schema preprocessing demo (Step 0.1) |
 | `python -m src.test.test_keywords` | Keyword extraction test |
 | `python -m src.test.test_three_questions` | Graph input JSON for questions 1471–1473 |
@@ -210,7 +212,7 @@ print(keywords)
 | Phase | Module | Command | Output |
 |-------|--------|---------|--------|
 | **Step 0.1** Schema Preprocessing | `schema_preprocess/preprocessor.py` | `python -m src.test.test_preprocessing` | Semantic names + structural types (demo) |
-| **Step 1** Offline Graph Build | `build_graph.py` | `python -m src.offline.build_graph` | Graph + clusters saved to `data/processed/` |
+| **Step 1** Offline Graph Build | `test_bird_mini.py` | `python -m src.test.test_bird_mini` | Graph + clusters saved to `data/processed/` |
 | **Step 2** Online Query | `query_processor.py` | `python -m src.online.query_processor` | Keywords, schema linking, graph input JSON |
 
 Schema preprocessing feeds directly into the graph builder. Graph uses column-level vectors, FK-based hard edges, and type-constrained soft edges with join key metadata.
@@ -220,7 +222,7 @@ Schema preprocessing feeds directly into the graph builder. Graph uses column-le
 - `--mode auto` uses Ollama if reachable, otherwise falls back to rule-based.
 - Set `OLLAMA_BASE_URL` if your Ollama server is not on `http://localhost:11434`.
 - The offline step only needs to run once (or when schemas change).
-- Online step requires pre-built graphs from Step 1.
+- Online step requires pre-built graphs. Run `python -m src.test.test_bird_mini` first.
 
 ## Workflow
 
