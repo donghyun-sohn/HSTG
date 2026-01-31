@@ -3,10 +3,12 @@
 Main test script for BIRD mini-dev benchmark.
 
 This script demonstrates the complete HSTG pipeline:
-- Step 0: Schema preprocessing (Semantic Names + Structural Types)
-- Step 1: Graph construction (Hybrid edges: Hard FK + Soft semantic)
-- Step 2: Clustering (Louvain community detection → Super Nodes)
-- Step 3: Online query processing (Entity extraction → Schema linking → Graph traversal)
+- Step 0: Keyword extraction (full_question → Ollama → keywords)
+- Step 1: Schema preprocessing (Semantic Names + Structural Types)
+- Step 2: Graph construction (Hybrid edges: Hard FK + Soft semantic)
+- Step 3: Clustering (Louvain community detection → Super Nodes)
+- Step 4: Online query processing (Schema linking → Graph traversal)
+- Step 5: Evaluation
 """
 
 from __future__ import annotations
@@ -16,17 +18,14 @@ import pickle
 from pathlib import Path
 from typing import Dict, Any
 
-from src.common.loader import load_unique_schemas
-from src.offline.schema_preprocess import (
-    parse_bird_schema,
-    preprocess_schema,
-    serialize_preprocessed_schema,
-    to_dict,
-)
+from src.common.loader import load_unique_schemas, iter_bird_data
+from src.offline.schema_preprocess import parse_bird_schema, preprocess_schema
+from src.online.entity_extractor import extract_entities
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_FILE = PROJECT_ROOT / "mini_dev-main/finetuning/inference/mini_dev_prompt.jsonl"
 OUTPUT_DIR = PROJECT_ROOT / "data/processed"
+KEYWORD_LIMIT = 3
 
 
 def main() -> None:
@@ -40,14 +39,44 @@ def main() -> None:
         return
 
     # =========================================================================
-    # Step 0: Schema Preprocessing
+    # Step 0: Keyword Extraction
+    # =========================================================================
+    # Read full_question and extract keywords using Ollama (fallback: rule-based)
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("Step 0: Keyword Extraction")
+    print("=" * 80)
+
+    count = 0
+    for item in iter_bird_data(DATA_FILE):
+        if count >= KEYWORD_LIMIT:
+            break
+        full_question = item.get("full_question", item.get("question", "")).strip()
+        db_id = item.get("db_id", "")
+        question_id = item.get("question_id", "?")
+        if not full_question or not db_id:
+            continue
+        print(f"\n[{question_id}] DB: {db_id}")
+        preview = full_question[:80] + "..." if len(full_question) > 80 else full_question
+        print(f"  Full question: {preview}")
+        try:
+            keywords = extract_entities(full_question, mode="llm")
+        except Exception as e:
+            print(f"  Ollama error: {e}, falling back to rule-based")
+            keywords = extract_entities(full_question, mode="rule")
+        print(f"  Keywords: {keywords}")
+        count += 1
+    print(f"\nStep 0 complete: Extracted keywords for {count} questions")
+
+    # =========================================================================
+    # Step 1: Schema Preprocessing
     # =========================================================================
     # Load JSONL and preprocess all unique schemas into:
-    # - Semantic Names: FQN with PK/FK annotations and example data (for embedding)
+    # - Semantic Names: FQN with PK/FK annotations (for embedding)
     # - Structural Types: Column data types (for hard type constraints)
     # =========================================================================
     print("\n" + "=" * 80)
-    print("Step 0: Schema Preprocessing")
+    print("Step 1: Schema Preprocessing")
     print("=" * 80)
 
     schemas = load_unique_schemas(str(DATA_FILE))
@@ -68,12 +97,12 @@ def main() -> None:
         num_fks = len(preprocessed.fk_mapping)
         print(f"  [{db_id}] {num_tables} tables, {num_fks} FK relationships")
 
-    print(f"\nStep 0 complete: Preprocessed {len(preprocessed_schemas)} schemas")
+    print(f"\nStep 1 complete: Preprocessed {len(preprocessed_schemas)} schemas")
 
     graphs: Dict[str, Any] = {}
 
     # =========================================================================
-    # Step 1: Graph Construction
+    # Step 2: Graph Construction
     # =========================================================================
     # Build hybrid graph for each schema:
     # - Node: Table with column-level vectors (semantic_names embedded)
@@ -82,7 +111,7 @@ def main() -> None:
     # - Edge metadata: source_col, target_col for JOIN key mapping
     # =========================================================================
     print("\n" + "=" * 80)
-    print("Step 1: Graph Construction")
+    print("Step 2: Graph Construction")
     print("=" * 80)
 
     try:
@@ -96,14 +125,14 @@ def main() -> None:
             hard_edges = sum(1 for _, _, d in G.edges(data=True) if d.get("type") == "hard")
             soft_edges = num_edges - hard_edges
             print(f"  [{db_id}] {num_nodes} nodes, {num_edges} edges ({hard_edges} hard, {soft_edges} soft)")
-        print(f"\nStep 1 complete: Built graphs for {len(graphs)} databases")
+        print(f"\nStep 2 complete: Built graphs for {len(graphs)} databases")
     except Exception as e:
         print(f"  Error: {e}")
         import traceback
         traceback.print_exc()
 
     # =========================================================================
-    # Step 2: Clustering (Super Node Creation)
+    # Step 3: Clustering (Super Node Creation)
     # =========================================================================
     # Run Louvain community detection on hybrid graph:
     # - Group related tables into Super Nodes
@@ -111,11 +140,11 @@ def main() -> None:
     # - Save graph and cluster artifacts
     # =========================================================================
     print("\n" + "=" * 80)
-    print("Step 2: Clustering (Super Node Creation)")
+    print("Step 3: Clustering (Super Node Creation)")
     print("=" * 80)
 
     if not graphs:
-        print("  Skipped: No graphs from Step 1")
+        print("  Skipped: No graphs from Step 2")
     else:
         try:
             from src.offline.clustering import detect_communities
@@ -143,14 +172,14 @@ def main() -> None:
                     json.dump(cluster_data, f, indent=2, ensure_ascii=False)
 
                 print(f"  [{db_id}] {num_clusters} clusters, saved to {graph_path.name}, {cluster_path.name}")
-            print(f"\nStep 2 complete: Saved graphs and clusters for {len(graphs)} databases")
+            print(f"\nStep 3 complete: Saved graphs and clusters for {len(graphs)} databases")
         except Exception as e:
             print(f"  Error: {e}")
             import traceback
             traceback.print_exc()
 
     # =========================================================================
-    # Step 3: Online Query Processing
+    # Step 4: Online Query Processing
     # =========================================================================
     # For each question:
     # 1. Extract entities (concepts, values, operations) using LLM
@@ -160,7 +189,7 @@ def main() -> None:
     # 5. Output: List of relevant tables for SQL generation
     # =========================================================================
     print("\n" + "=" * 80)
-    print("Step 3: Online Query Processing")
+    print("Step 4: Online Query Processing")
     print("=" * 80)
     print("TODO: Implement online query processing")
     print("  - Entity extraction with table name context")
@@ -169,7 +198,7 @@ def main() -> None:
     print("  - Graph traversal from anchors")
 
     # =========================================================================
-    # Step 4: Evaluation
+    # Step 5: Evaluation
     # =========================================================================
     # Compare predicted tables with ground truth SQL:
     # - Precision: How many predicted tables are correct?
@@ -177,7 +206,7 @@ def main() -> None:
     # - F1 Score
     # =========================================================================
     print("\n" + "=" * 80)
-    print("Step 4: Evaluation")
+    print("Step 5: Evaluation")
     print("=" * 80)
     print("TODO: Implement evaluation metrics")
     print("  - Extract tables from ground truth SQL")
